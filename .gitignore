@@ -1,0 +1,12 @@
+# project folders
+data/
+output/
+
+# logs
+*.log
+
+# cache
+__pycache__/
+
+# notes
+*.txt
