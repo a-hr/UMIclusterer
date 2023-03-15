@@ -5,15 +5,15 @@ class LogMessages:
     @staticmethod
     def init_log(bam: str, regions: list, outdir: str):
         return f"""Initializing UMIclusterer.
-Python version: {sys.version}")
+Python version: {sys.version}"
 Input bam: {bam}")
-Target regions: {regions}")
-Output directory: {outdir}")
+Target regions: {regions}"
+Output directory: {outdir}"
 {"-" * 50}
 """
 
     @staticmethod
-    def get_config():
+    def get_config(debug: bool):
         return {
             "version": 1,
             "disable_existing_loggers": False,
@@ -34,7 +34,7 @@ Output directory: {outdir}")
             },
             "loggers": {
                 "": {
-                    "level": "INFO",
+                    "level": "DEBUG" if debug else "INFO",
                     "handlers": ["file"],
                 }
             },
