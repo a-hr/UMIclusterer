@@ -1,6 +1,7 @@
 # project folders
 data/
 output/
+test_output/
 
 # logs
 *.log
