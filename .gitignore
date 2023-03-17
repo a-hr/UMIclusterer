@@ -9,5 +9,8 @@ test_output/
 # cache
 __pycache__/
 
+# editor files
+.idea/
+
 # notes
 *.txt

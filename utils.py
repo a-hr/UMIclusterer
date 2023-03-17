@@ -26,7 +26,7 @@ Output directory: {outdir}"
             "handlers": {
                 "file": {
                     "class": "logging.FileHandler",
-                    "filename": "UMIclusterer.log",
+                    "filename": "UMIClusterer.log",
                     "mode": "w",
                     "encoding": "utf-8",
                     "formatter": "default",

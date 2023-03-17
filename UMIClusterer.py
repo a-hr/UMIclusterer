@@ -10,14 +10,14 @@ from scipy.cluster import hierarchy
 logger = logging.getLogger(__name__)
 
 
-class UMI_clusterer:
+class UMIClusterer:
     def __init__(self, bam: str, regions: list, outdir: str) -> None:
         self.bam = Path(bam)
         self.outdir = Path(outdir)
 
         self.regions = regions  # list of tuples (chr, start, end)
 
-        self.UMIs = list()  # will hold an array of UMIs for each region
+        self.UMIs = list()  # will hold an array of umis for each region
         self.reads = list()  # will hold an array of reads for each region
 
         if not self.bam.exists():
@@ -32,7 +32,7 @@ class UMI_clusterer:
         with AlignmentFile(self.bam, "rb") as bamfile:
             for region in self.regions:
                 logger.info(
-                    f"Fetching reads and UMIs from {region[0]}:{region[1]}-{region[2]}"
+                    f"Fetching reads and umis from {region[0]}:{region[1]}-{region[2]}"
                 )
                 self.reads.append(
                     np.array([read.query_name for read in bamfile.fetch(*region)])
@@ -48,12 +48,12 @@ class UMI_clusterer:
         logger.info("Bam file parsed.")
 
         if not self.UMIs and not self.reads:
-            logger.error("No UMIs or reads found.")
+            logger.error("No umis or reads found.")
             quit(1)
 
     def compute_clusters(self, threshold: int = 1) -> list:
         if not self.UMIs and not self.reads:
-            raise ValueError("UMIs and reads not initialized. Run read_bam() first.")
+            raise ValueError("umis and reads not initialized. Run read_bam() first.")
 
         clusters_per_region = list()
 
@@ -96,16 +96,18 @@ class UMI_clusterer:
                     of.write(_r)
         logger.debug(f"{out_f} generated.")
 
-    def _get_distances(self, UMIs: np.array) -> np.array:
+    @staticmethod
+    def _get_distances(umis: np.array) -> np.array:
         return np.array(
             [
-                Levenshtein.hamming(UMIs[i], UMIs[j])
-                for i in range(len(UMIs))
-                for j in range(len(UMIs))
+                Levenshtein.hamming(umis[i], umis[j])
+                for i in range(len(umis))
+                for j in range(len(umis))
             ]
-        ).reshape(len(UMIs), len(UMIs))
+        ).reshape(len(umis), len(umis))
 
-    def _fetch_by_cluster_idx(self, umis, clusters, idx):
+    @staticmethod
+    def _fetch_by_cluster_idx(umis, clusters, idx):
         return umis[clusters == idx].tolist()
 
     def _run_clustering(self, umis: np.array, threshold: int = 1) -> np.array:
@@ -119,10 +121,10 @@ class UMI_clusterer:
         distance_condensed = hierarchy.distance.squareform(dist_matrix)
 
         # Perform hierarchical clustering with complete linkage
-        Z = hierarchy.linkage(distance_condensed, method="complete")
+        z = hierarchy.linkage(distance_condensed, method="complete")
 
         # Extract clusters from the dendrogram
-        clusters = hierarchy.fcluster(Z, t=threshold, criterion="distance")
+        clusters = hierarchy.fcluster(z, t=threshold, criterion="distance")
         if not clusters.any():
             logger.warning("No clusters found. Skipping clustering.")
             return None
@@ -138,8 +140,8 @@ class UMI_clusterer:
         # plt.ylabel("distance")
         # hierarchy.dendrogram(
         #     Z,
-        #     leaf_rotation=90.0,  # rotates the x axis labels
-        #     leaf_font_size=8.0,  # font size for the x axis labels
+        #     leaf_rotation=90.0,  # rotates the x-axis labels
+        #     leaf_font_size=8.0,  # font size for the x-axis labels
         # )
         # plt.savefig("dendrogram.png")
         pass

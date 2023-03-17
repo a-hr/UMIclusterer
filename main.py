@@ -5,7 +5,7 @@ from time import time
 import click
 import pandas as pd
 
-from UMI_clusterer import UMI_clusterer
+from UMIClusterer import UMIClusterer
 from utils import LogMessages
 
 
@@ -51,7 +51,7 @@ from utils import LogMessages
 def main(bam, fastq, target_regions, outdir, saf, debug):
     """
     Takes the path to a BAM file and its associated FASTQ, finds the reads in
-    the specified targets and clusters them based on their UMIs' similarity.
+    the specified targets and clusters them based on their umis' similarity.
     """
 
     logging.config.dictConfig(LogMessages.get_config(debug=debug))
@@ -68,7 +68,7 @@ def main(bam, fastq, target_regions, outdir, saf, debug):
         (row["chr"], row["start"], row["end"]) for _, row in target_regions.iterrows()
     ]
 
-    uc = UMI_clusterer(bam, target_regions, outdir)
+    uc = UMIClusterer(bam, target_regions, outdir)
     uc.read_bam()
 
     logger.info("Starting clustering...")
