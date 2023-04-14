@@ -20,7 +20,7 @@ source ~/.bashrc
 echo "export PATH=$PATH:/path/to/UMIclusterer" >> ~/.bashrc
 ```
 
-A docker image is also available on [Docker Hub](https://hub.docker.com/r/ahr1/umiclusterer). TODO: upload image
+A docker image is also available on [Docker Hub](https://hub.docker.com/r/ahr1/umiclusterer).
 
 ## Dependencies
 
