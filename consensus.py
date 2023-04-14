@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple, Dict, TypeVar
+from typing import List, Tuple, TypeVar
 
 import numpy as np
 
