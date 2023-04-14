@@ -1,3 +1,4 @@
+import os
 import sys
 from typing import List, Tuple, TypeVar, Union
 
@@ -31,7 +32,7 @@ class LogMessages:
             "handlers": {
                 "file": {
                     "class": "logging.FileHandler",
-                    "filename": "UMIClusterer.log",
+                    "filename": os.path.join(os.getcwd(), "UMIClusterer.log"),
                     "mode": "w",
                     "encoding": "utf-8",
                     "formatter": "default",
