@@ -13,4 +13,6 @@ RUN conda install --file spec-file.txt
 
 RUN pip install levenshtein
 
+ENV PATH="/usr/bin/UMIclusterer:$PATH" 
+
 CMD [ "/bin/bash" ]
