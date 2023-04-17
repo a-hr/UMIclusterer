@@ -47,8 +47,15 @@ class LogMessages:
         }
 
 
+class EmptyClusterError(Exception):
+    pass
+
+
 class CustomAlignedSegment:
     def __init__(self, read: AlignedSegment):
+        if not isinstance(read, pysam.libcalignedsegment.AlignedSegment):
+            raise EmptyClusterError("Read is not an AlignedSegment object.")
+        
         self.seq: str = read.query_sequence
         self.quality: List[Union[str, int]] = list(read.query_qualities)  # no 33 offset
         self.id: str = read.query_name

@@ -3,7 +3,7 @@ from typing import List, Tuple, TypeVar
 
 import numpy as np
 
-from .utils import CustomAlignedSegment, ConsensusRead
+from .utils import CustomAlignedSegment, ConsensusRead, EmptyClusterError
 
 
 logger = logging.getLogger(__name__)

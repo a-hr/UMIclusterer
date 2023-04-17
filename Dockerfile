@@ -3,7 +3,7 @@ FROM continuumio/miniconda3
 LABEL author="https://github.com/a-hr"
 LABEL description="Wrapper for UMIclusterer (https://github.com/a-hr/UMIclusterer). Includes all its dependencies."
 
-WORKDIR /usr/bin/UMIclusterer
+WORKDIR /usr/local/bin/UMIclusterer
 
 COPY ./ .
 
@@ -13,6 +13,7 @@ RUN conda install --file spec-file.txt
 
 RUN pip install levenshtein
 
-ENV PATH="/usr/bin/UMIclusterer:$PATH" 
+ENV PATH="/usr/local/bin/UMIclusterer:$PATH" 
+RUN chmod +x /usr/local/bin/UMIclusterer/umiclusterer.py
 
 CMD [ "/bin/bash" ]

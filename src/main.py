@@ -9,7 +9,7 @@ import pandas as pd
 
 from .clusterer import Clusterer
 from .consensus import Consensus
-from .utils import LogMessages
+from .utils import LogMessages, EmptyClusterError
 
 ConsensusRead = TypeVar("ConsensusRead")
 
@@ -66,7 +66,7 @@ def main(bam, target_regions, saf, debug):
     t = time()
 
     consensus_reads = list()
-
+    errors = 0
     for target_n, target_clusters in clusters.items():
         logger.info(
             f"Computing consensus sequences for target {target_n + 1}/{len(clusters)}"
@@ -76,12 +76,18 @@ def main(bam, target_regions, saf, debug):
             logger.debug(
                 f"Computing consensus for cluster {cluster_n + 1}/{len(target_clusters)}"
             )
-            cs = Consensus(reads)
+
+            try:
+                cs = Consensus(reads)
+            except EmptyClusterError:
+                errors += 1
+                continue
             consensus_reads.append(cs.compute_consensus())
 
     logger.info(
         f"{len(consensus_reads)} consensus sequences computed in {(time() - t):2f}s.\n{'-' * 50}"
     )
+    logger.info(f"{errors} clusters were empty.")
 
     # ------------------ Exporting ------------------
     logger.info("Exporting consensus sequences to STDOUT...")
