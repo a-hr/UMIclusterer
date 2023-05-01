@@ -12,18 +12,28 @@ from src import UMIclusterer
     required=True,
 )
 @click.option(
-    "--target_regions",
-    "-t",
-    type=click.Path(exists=True),
-    help="Path to the file containing the target regions.",
-    required=True,
+    "--threads",
+    "-j",
+    type=click.INT,
+    help="Threads to use to speed up clustering process.",
+    required=False,
+    default=1,
 )
 @click.option(
-    "--saf",
-    "-s",
-    is_flag=True,
-    help="Target regions are in SAF format.",
+    "--threshold",
+    "-t",
+    type=click.INT,
+    help="Hamming distance threshold between UMIs.",
     required=False,
+    default=1,
+)
+@click.option(
+    "--window",
+    "-w",
+    type=click.INT,
+    help="Allowed window around genomic start and end to consider two reads the same.",
+    required=False,
+    default=5,
 )
 @click.option(
     "--debug",
@@ -32,8 +42,8 @@ from src import UMIclusterer
     help="Enables debug mode.",
     required=False,
 )
-def main(bam, target_regions, saf, debug):
-    UMIclusterer(bam, target_regions, saf, debug)
+def main(bam, threads, threshold, window, debug):
+    UMIclusterer(bam, threads, threshold, window, debug)
 
 
 if __name__ == "__main__":

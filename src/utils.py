@@ -1,10 +1,12 @@
 import os
 import sys
-from typing import List, Tuple, TypeVar, Union
+import logging
+from typing import List, Tuple, TypeVar
 
 import pysam
 
 AlignedSegment = TypeVar("AlignedSegment")
+logger = logging.getLogger(__name__)
 
 
 class LogMessages:
@@ -57,18 +59,15 @@ class CustomAlignedSegment:
             raise EmptyClusterError("Read is not an AlignedSegment object.")
         
         self.seq: str = read.query_sequence
-        self.quality: List[Union[str, int]] = list(read.query_qualities)  # no 33 offset
+        self.int_qual: List[int] = list(read.query_qualities)  # Q scores as integers, not ASCII values (base 33)
+
         self.id: str = read.query_name
         self.cigar: Tuple[Tuple[int, int]] = read.cigartuples
 
-        self.pad_seq: str = ""
-        self.pad_qual: List[Union[str, int]] = []
-
-        self.__ascii = False
         self.__seq_padded = False
         self.__qual_padded = False
 
-    def seq_pad(self) -> str:
+    def seq_pad(self) -> None:
         """
         Takes a read and its cigar and formats the read accordingly:
             - Matches and mismatches are left as is.
@@ -77,29 +76,27 @@ class CustomAlignedSegment:
         """
         if not self.__seq_padded:
             self.__seq_padded = True
-            self.pad_seq = ""
             pos = 0
+            _seq = ""
 
             for op, length in self.cigar:
                 if op == 0:  # match or mismatch
-                    self.pad_seq += self.seq[pos : pos + length]
+                    _seq += self.seq[pos : pos + length]
                     pos += length
                 elif op == 1:  # insertion
-                    self.pad_seq += self.seq[pos : pos + length].lower()
+                    _seq += self.seq[pos : pos + length].lower()
                     pos += length
                 elif op == 2:  # deletion
-                    self.pad_seq += "p" * length
+                    _seq += "p" * length
                 elif op == 3:  # skipped region
                     continue
                 elif op == 4:  # soft clipping
                     continue
                 elif op == 5:  # hard clipping
                     continue
-            return self.pad_seq
+            self.seq = _seq
 
-        return self.pad_seq
-
-    def qual_pad(self) -> List[Union[str, int]]:
+    def qual_pad(self) -> None:
         """
         Takes a quality string and a read and pads the quality string accordingly:
             - Matches and mismatches are left as is.
@@ -112,54 +109,81 @@ class CustomAlignedSegment:
         if not self.__qual_padded:
             self.__qual_padded = True
             pos = 0
-            self.pad_qual = []
+            _int_qual = []
 
-            for char in self.pad_seq:
+            for char in self.seq:
                 if char == "p":
-                    self.pad_qual.append("p")
+                    _int_qual.append("p")
                 else:
-                    self.pad_qual.append(self.quality[pos])
+                    _int_qual.append(self.int_qual[pos])
                     pos += 1
-            return self.pad_qual
+            self.int_qual = _int_qual
 
-        return self.pad_qual
-
-    def to_phred(self) -> List[int]:
-        """Converts an ASCII-encoded quality string to a list of Phred quality scores.
-        - Note: this class works withouth the 33 offset. It is only added when exporting.
-        """
-        if not self.__ascii:
-            return self.quality
-        else:
-            self.__ascii = False
-            self.quality = [char if char == "p" else ord(char) for char in self.quality]
-
-        return self.quality
-
-    def to_ascii(self) -> List[str]:
-        """Converts a list of Phred quality scores to an ASCII-encoded quality string.
-        - Note: this class works withouth the 33 offset. It is only added when exporting.
-        """
-        if self.__ascii:
-            return self.quality
-        else:
-            self.__ascii = True
-            self.quality = [
-                score if score == "p" else chr(score) for score in self.quality
-            ]
-
-        return self.quality
+    def __str__(self):
+        return f"{self.id=} {self.seq=} {self.int_qual=}"
 
 
 class ConsensusRead:
     def __init__(self, seq: str, qual: List[int], _id: str) -> None:
         self.seq: str = seq
-        self.qual: str = self.__unphred(qual)
+        self.q_score: str = "".join([str(q) for q in qual])
+        self.ascii_qual: str = "".join([chr(score + 33) for score in qual])
         self.id: str = _id
 
-    @staticmethod
-    def __unphred(qual: List[int]) -> str:
-        return "".join([chr(score + 33) for score in qual])
-
     def __str__(self):
-        return f"@{self.id}\n{self.seq}\n+\n{self.qual}"
+        return f"@{self.id}\n{self.seq}\n+{self.q_score}\n{self.ascii_qual}"
+
+
+class PickableRead:
+    def __init__(self, read: AlignedSegment) -> None:
+        self.query_name: str = read.query_name
+        self.reference_name: str = read.reference_name
+        self.reference_start: int = read.reference_start
+        self.reference_end: int = read.reference_end
+        self._id = (self.query_name, self.reference_name, self.reference_start, self.reference_end)
+
+
+def group_reads(ordered_reads: List[List[PickableRead]], original_reads: List[AlignedSegment]) -> List[List[AlignedSegment]]:
+    """
+    Groups the original reads into the same groups as the ordered reads, using their query_name as a key.
+    It also flattens the list of lists of lists of reads into a list of lists of reads, removing the 
+    groping by contig, that is no longer needed.
+    """
+    # flatten the first level of ordererd lists
+    _reads = []
+    for contig_reads in ordered_reads:
+        _reads.extend(contig_reads)
+    ordered_reads = _reads
+    del _reads
+
+    # flatten the first level of original lists
+    _reads = []
+    for contig_reads in original_reads:
+        _reads.extend(contig_reads)
+    original_reads = _reads
+
+    #####################################
+    infer_id = lambda read: (read.query_name, read.reference_name, read.reference_start, read.reference_end)
+    grouped_reads = []
+    for cluster in ordered_reads:
+
+        # get the ids of the reads in the cluster
+        try:
+            cluster_read_ids = {read.query_name for read in cluster}
+        except TypeError:
+            # cluster contains a single read
+            cluster_read_ids = {cluster.query_name}
+            cluster = [cluster]
+
+        # create a new cluster with matching query_names (multimappers will be duplicated)
+        new_cluster = [read for read in original_reads if read.query_name in cluster_read_ids]
+
+        # check the presence of multimappers, and ask the object for more info to resolve them
+        if isinstance(cluster, list) and len(cluster) != len(new_cluster):
+            # compare with ids (slower but definitive
+            cluster_read_ids = [read._id for read in cluster]
+            new_cluster = [read for read in new_cluster if infer_id(read) in cluster_read_ids]
+
+        grouped_reads.append(new_cluster)
+
+    return grouped_reads

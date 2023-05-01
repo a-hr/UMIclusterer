@@ -11,8 +11,6 @@ RUN conda install python=3.8.15
 
 RUN conda install --file spec-file.txt
 
-RUN pip install levenshtein
-
 ENV PATH="/usr/local/bin/UMIclusterer:$PATH" 
 RUN chmod +x /usr/local/bin/UMIclusterer/umiclusterer.py
 

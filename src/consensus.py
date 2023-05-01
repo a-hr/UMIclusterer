@@ -12,34 +12,29 @@ AlignedSegment = TypeVar("AlignedSegment")
 
 class Consensus:
     def __init__(self, reads: List[AlignedSegment]) -> None:
-        # convert the reads to CustomAlignedSegment objects
-        reads: List[CustomAlignedSegment] = [
-            CustomAlignedSegment(read) for read in reads
-        ]
-        # sort the objs by their sequence length
-        self.reads = sorted(reads, key=lambda x: len(x.seq), reverse=True)
+        # convert the reads to CustomAlignedSegment objects and sort them by their length
+        self.reads = [CustomAlignedSegment(read) for read in reads]
 
-    def compute_consensus(self) -> CustomAlignedSegment:
+    def compute_consensus(self) -> ConsensusRead:
         """Computes the consensus read for a cluster.
 
         Returns:
             CustomAlignedSegment: An object containing the consensus sequence, quality string and read_id.
         """
         if len(self.reads) == 1:
-            return ConsensusRead(
-                self.reads[0].seq, self.reads[0].quality, self.reads[0].id
-            )
+            return ConsensusRead(self.reads[0].seq, self.reads[0].int_qual, self.reads[0].id)
 
-        # format the sequences to account for indels
+        # pad the sequences to account for indels
         [read.seq_pad() for read in self.reads]
 
         # sort the reads by their sequence length
         self.reads = sorted(self.reads, key=lambda x: len(x.seq), reverse=True)
+        try:
+            seq, qual = self._consensus()
+        except Exception as e:
+            logger.error(f"{e}\n\t{[str(read) for read in self.reads]}")
+            raise Exception(e)
 
-        # convert quality list of ints to list of strings
-        [read.to_ascii() for read in self.reads]
-
-        seq, qual = self._consensus()
         return ConsensusRead(seq, qual, self.reads[0].id)
 
     def _consensus(self) -> Tuple[str, List[int]]:
@@ -60,11 +55,7 @@ class Consensus:
         consensus = ""
         quality = []
 
-        for i in range(len(self.reads[0].seq)):
-            # get the base and quality in the ith position from all the reads
-            bases = [read.seq[i] for read in self.reads]
-            qualities = [reads.to_phred()[i] for reads in self.reads]  # in phred (0-42)
-
+        for bases, qualities in zip(zip(*[r.seq for r in self.reads]), zip(*[r.int_qual for r in self.reads])):
             # for each A, T, G, C, and p in the column, count the number of times it appears
             counts = {base: bases.count(base) / len(bases) for base in set(bases)}
             n_scores = {key: value * 10 for key, value in counts.items()}
@@ -76,31 +67,34 @@ class Consensus:
                     q_scores[base] += qualities[i]
 
             get_q_score = lambda base: q_scores[base] / (counts[base] * len(bases))
-            q_scores = {
-                b: get_q_score(b) for b in set(bases) if b != "p" and counts[b] != 0
-            }
+            qual_per_base: dict = {b: get_q_score(b) for b in set(bases) if b != "p" and counts[b] != 0}
 
             # !penalty: in case of tie, real base is taken. remove penalty if needed
-            q_scores["p"] = sum(q_scores.values()) / len(q_scores) - 5
+            try:
+                # deletions quality is the average quality of the other bases minos a penalty
+                qual_per_base["p"] = sum(qual_per_base.values()) / len(qual_per_base) - 5
+            except ZeroDivisionError:
+                # all bases are deletions, skip this position
+                continue
 
-            # assign a final score to each base: 0.6*n_score + 0.4*q_score
-            q_scores = self._assign_q_score(q_scores)
+            # assign a score to each base based on its quality
+            q_scores = self._assign_q_score(qual_per_base)
 
-            scores = {
-                base: 0.6 * n_scores[base] + 0.4 * q_scores[base]
-                for base in n_scores.keys()
-            }
+            # combine the scores from the quantity and quality
+            scores = {base: 0.5 * n_scores[base] + 0.5 * q_scores[base] for base in n_scores.keys()}
 
             # pick the base with the highest score
             base = max(scores, key=scores.get)
             consensus += base if base != "p" else ""
+
             if base != "p":
-                quality.append(int(q_scores[base]))
+                # asign the quality of the selected base to the consensus
+                quality.append(int(qual_per_base[base]))
 
-        assert len(consensus) == len(
-            quality
-        ), "Consensus and quality strings are not the same length."
-
+        if len(consensus) != len(quality):
+            logger.error("Consensus and quality strings are not the same length.")
+            raise ValueError("Consensus and quality strings are not the same length.")
+        
         return consensus, quality
 
     @staticmethod
@@ -118,7 +112,6 @@ class Consensus:
         max_length = max(len(r.seq) for r in reads)
 
         # Align each string with the longest string using the Needleman-Wunsch algorithm
-        aligned_reads = []
         for i in range(len(reads)):
             # Initialize the scoring matrix and the traceback matrix
             rows = len(reads[i].seq) + 1

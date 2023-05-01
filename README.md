@@ -2,8 +2,24 @@
 
 UMIclusterer is a tool for clustering reads by UMI similarity in Nanopore single-end sequencing data. It uses the `pysam` library to parse `bam` files, clusters the reads using ``numpy`` and ``scipy`` and finally outputs a new *consensus FASTQ* to the STDOUT.
 
-The aim of this project is to provide a tool for seamlessly deduplicating and correcting Nanopore sequences, searching for target mapped regions and clustering reads into groups by UMI.
-UMIs are grouped by their Humming distance (default 1) and the grouped reads are converted to  `FASTQ` format. These files can then be realigned with standard aligning tools such as [STAR](https://github.com/alexdobin/STAR).
+The aim of this project is to provide a tool for seamlessly deduplicating and correcting the error-prone Nanopore sequences, clustering reads into groups by UMI and genomic coordinates, and then creating a consensus read after evaluating the abundance and quality of each possible base.
+
+After generating the consensu file, it can then be realigned with standard aligning tools such as [STAR](https://github.com/alexdobin/STAR).
+
+# Why UMIclusterer?
+
+UMIclusterer was developed to perform consensus-basd error-correction on Nanopore single-end sequencing data, which means having to deal with the following issues:
+
+* **Error-prone reads**: Nanopore reads are known to be error-prone, with a high rate of indels and substitutions.
+* **UMIs with sequencing errors**: UMIs are short sequences that are added to the 5' end of the reads to identify PCR duplicates. However, they are also prone to sequencing errors,a nd can lead to false positives when clustering reads.
+* **Coordinate discordance**: due to the high error rate of Nanopore reads, (specially in low-complexity regions), reads from the same cluster can have different start and end coordinates, which can lead to false negatives when clustering reads. 
+
+Other deduplication tools, such as UMI-tools or Gencore, either:
+* select the highest quality duplicate, discarding the rest without correcting the errors
+* only allow paired-end reads
+* don't allow for coordinate discordance
+
+UMIclusterer aims to solve these issues by clustering reads by UMI and genomic coordinates, and then creating a consensus read after evaluating the abundance and quality of each possible base.
 
 # Installation
 
@@ -14,7 +30,7 @@ Using conda:
 # clone the repo
 git clone https://github.com/a-hr/UMIclusterer.git
 # install dependencies in a virtual environment
-conda create -n umiclusterer python=3.8 pysam numpy pandas scipy Levenshtein click
+conda create -n umiclusterer -c anaconda -c conda-forge -c bioconda python=3.8 pysam numpy scipy click
 source ~/.bashrc
 # add the repo to your path
 echo "export PATH=$PATH:/path/to/UMIclusterer" >> ~/.bashrc
@@ -28,46 +44,50 @@ UMIclusterer requires the following dependencies:
 
 * Python 3.8 or higher
 * pysam
-* pandas
 * numpy
 * scipy
-* Levenshtein
 * click
 
 # Usage
 
-To use UMIclusterer, run the script with the path to a BAM file as well as the path to the file containing the target regions:
+To use UMIclusterer, simply run the script with the path to a BAM file:
 
 ```bash
-python umiclusterer.py [path-to-bam-file] --target_regions [path-to-target-regions-file] | gzip > [output-file].fastq.gz
+python umiclusterer.py [path-to-bam-file] [--options] | gzip > [output-file].fastq.gz
 ```
 
 > Note that the BAM file must be sorted by read coordinates and indexed, and only contain single-end reads. 
 
-The target regions file must be a table-like file with the following columns:
+## Input
 
-* `Chr`: The chromosome number. It can either have the format `chr1` or `1`. `<str>|<int>`
-* `Start`: The start position of the target region. `<int>`
-* `End`: The end position of the target region. `<int>`
+UMIclusterer requires a BAM file as input. The BAM file must be sorted by read coordinates and indexed, and only contain single-end reads. It can handle multimapping reads without any issues.
 
-It can contain more columns, that will be ignored. Additionally, the file can be either in **tsv** or **csv** (``;``) format. The default expected format is the **csv**. Optionally, you can include the following flags:
+## Options
 
---saf or -s: Indicates that the target regions are in **tsv** format. The file used in featureCounts to generate the target regions file is in this *SAF* format.
---debug or -d: Enables debug mode, which includes additional information in the log file.
+The following options are available:
+* **-j | --threads**: Number of threads to use. Defaults to 1.
+* **-t | --threshold**: Threshold for the Hamming distance between UMIs. Defaults to 1.
+* **-w | --window**: Window size for the genomic coordinates. Creates a *safe-zone* of *-w [INT]* bases around both start and end coordinates, inside of which reads are considered to be elegible to be clustered. Defaults to 5, change based on the expected size of your reads.
+* **-d | --debug**: Enables debug mode, which includes additional information in the log file.
 
-# Output
+## Output
 
 UMIclusterer outputs a ``FASTQ`` file to the STDOUT containing either the consensus read or the original read, depending on whether a cluster was found or not. All the mapped reads in the BAM file are processed and passed to the output.
 
 # How it works
 
-1. For each target region specified in the input file, UMIclusterer will extract all the reads that map to that region.
-2. Then, a Humming-distance matrix is calculated for all the reads in the region.
-3. The reads are then clustered using hierarchical clustering, with a threshold of 1 Humming distance to be considered in the same cluster.
-4. The clusters are then passed to the consensus module, that aligns the reads in the cluster between them, and analyses the sequences a a per-base basis, giving each possible base (A, C, G, T or None) a score based on their occurrence rate in the cluster and their basecall quality.
+1. The BAM file is parsed and the reads are grouped by genomic coordinates. This enables the use of multiprocessing without having to worry about reads from the same cluster being processed in different threads.
+2. Then, the paiwise distance between all the reads in the contig is calculated, where the distance is the sum of the Hamming distance between the UMIs and the genomic distance between the reads.
+3. The reads are then grouped using hierarchical clustering, based on the threshold and window given by the user.
+4. The clusters are then passed to the consensus module, that aligns the reads in the cluster between them (global alignment using Needleman-Wunsch), and analyses the sequences on a per-base basis, giving each possible base (A, C, G, T or None) a score based on their abundance rate in the cluster and their basecall quality.
+
+# TODO
+
+* Add support for specific target regions, speeding up the process
+* Translate bottleneck functions to C
 
 # Credits
-UMIclusterer was developed by Álvaro Herrero as part of his final project carried out at the Biodonostia HRI.
+UMIclusterer was developed by Álvaro Herrero as part of his final thesis carried out at the Biodonostia HRI.
 
 # License
 UMIclusterer is licensed under the GPLv3 license. See the LICENSE file for more information.

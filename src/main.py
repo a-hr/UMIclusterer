@@ -2,63 +2,97 @@
 
 import logging
 import logging.config
+import multiprocessing
 from time import perf_counter as time
-from typing import TypeVar
+from typing import TypeVar, List
 
-import pandas as pd
+from pysam import AlignedSegment
 
 from .clusterer import Clusterer
 from .consensus import Consensus
-from .utils import LogMessages, EmptyClusterError
+from .utils import LogMessages, EmptyClusterError, PickableRead, group_reads
 
 ConsensusRead = TypeVar("ConsensusRead")
 
-
-def main(bam, target_regions, saf, debug):
+def main(bam: str, threads: int, threshold: int, window: int, debug: bool):
     """
-    Takes the path to a BAM file and its associated FASTQ, finds the reads in
-    the specified targets and clusters them based on their umis' similarity.
+    Takes the path to a UMI tagged BAM file, parses the reads
+    and clusters them based on their UMI's similarity and genomic
+    coordinates.
     """
 
     # ------------------ Logging ------------------
     logging.config.dictConfig(LogMessages.get_config(debug=debug))
     logger = logging.getLogger(__name__)
 
-    logger.info(LogMessages.init_log(bam, target_regions))
+    logger.info(LogMessages.init_log(bam, ""))
     ti = time()
-    # ------------------ Parsing Inputs ------------------
-    if not saf:
-        target_regions = pd.read_csv(target_regions, sep=";")
-    else:
-        target_regions = pd.read_csv(target_regions, sep="\t")
-
-    target_regions = [
-        (
-            row["Chr"] if "chr" in str(row["Chr"]) else f"chr{row['Chr']}",
-            row["Start"],
-            row["End"],
-        )
-        for _, row in target_regions.iterrows()
-    ]
 
     # ------------------ START ------------------
-    uc = Clusterer(bam, target_regions)
-    bam_reads = uc.read_bam()
+    if min(threads, multiprocessing.cpu_count()) != threads:
+        threads = multiprocessing.cpu_count()
+        logger.warning(
+            f"Invalid number of threads. Setting threads to {threads}."
+        )
+
+    uc = Clusterer(bam)
+    bam_reads: List[List[AlignedSegment]] = uc.read_bam(threads=threads)
+
+    if threads > 1:
+        total_reads = sum([len(contig) for contig in bam_reads])
+    else:
+        total_reads = len(bam_reads)
 
     # ------------------ Clustering ------------------
     logger.info("Starting clustering...")
     t = time()
 
-    clusters = dict()  # key: target_n, val: dict of {clusterN: [bam_reads]}
+    # create an object to hold relevant data from each read and still be pickable
+    if threads > 1:
+        pk_reads = list()
+        for contig in bam_reads:
+            pk_reads.append([PickableRead(read) for read in contig])
 
-    # TODO: use multiprocessing to cluster in parallel
-    for target_n, read_objs in bam_reads.items():
-        logger.info(f"Clustering target {target_n + 1}/{len(bam_reads)}")
-        UMIs = uc.get_UMIs(read_objs)
+    # cluster the reads
+    if threads > 1:
+        with multiprocessing.Pool(processes=threads) as pool:
+            # Apply the process_element function to each element in the list
+            pk_clustered_reads = pool.map(uc.cluster, pk_reads)
+    else:
+        clustered_reads: List[List[AlignedSegment]] = uc.cluster(bam_reads)
 
-        clusters[target_n] = uc.compute_clusters(UMIs, read_objs)
+    # trace back the original reads if using threading
+    if threads > 1:
+        clustered_reads = group_reads(pk_clustered_reads, bam_reads)
+        del pk_clustered_reads
+        del pk_reads
+        del bam_reads
+    else:
+        del bam_reads
 
     logger.info(f"Clustering completed in {(time() - t):2f}s.\n{'-' * 50}")
+    logger.info(f"{len(clustered_reads)} clusters found out of {total_reads} reads.")
+
+    # check integrity of the clustering
+    def count_objects(nested_list, obj_type):
+        count = 0
+        if isinstance(nested_list, obj_type):
+            count += 1
+        elif isinstance(nested_list, list):
+            for sublist in nested_list:
+                count += count_objects(sublist, obj_type)
+        return count
+
+    logger.info("Checking integrity of the clustering...")
+
+    try:
+        assert total_reads == count_objects(clustered_reads, AlignedSegment)
+    except AssertionError:
+        logger.error("Some reads were duplicated during the clustering process.")
+        logger.error(f"Total reads: {total_reads}")
+        logger.error(f"Clustered reads: {count_objects(clustered_reads, AlignedSegment)}")
+        raise AssertionError
+    logger.info(f"Clustering integrity check passed.\n{'-' * 50}")
 
     # ------------------ Consensus sequences ------------------
     logger.info("Starting consensus sequence computing...")
@@ -67,33 +101,20 @@ def main(bam, target_regions, saf, debug):
 
     consensus_reads = list()
     errors = 0
-    for target_n, target_clusters in clusters.items():
-        logger.info(
-            f"Computing consensus sequences for target {target_n + 1}/{len(clusters)}"
-        )
+    for reads in clustered_reads:
+        try:
+            cs = Consensus(reads)
+        except EmptyClusterError:
+            errors += 1
+            continue
+        consensus_reads.append(cs.compute_consensus())
 
-        for cluster_n, reads in enumerate(target_clusters.values()):
-            logger.debug(
-                f"Computing consensus for cluster {cluster_n + 1}/{len(target_clusters)}"
-            )
-
-            try:
-                cs = Consensus(reads)
-            except EmptyClusterError:
-                errors += 1
-                continue
-            consensus_reads.append(cs.compute_consensus())
-
-    logger.info(
-        f"{len(consensus_reads)} consensus sequences computed in {(time() - t):2f}s.\n{'-' * 50}"
-    )
+    logger.info(f"Consensus sequences computed in {(time() - t):2f}s.\n{'-' * 50}")
     logger.info(f"{errors} clusters were empty.")
 
     # ------------------ Exporting ------------------
     logger.info("Exporting consensus sequences to STDOUT...")
-
-    for read in consensus_reads:
-        print(read)
+    print(*consensus_reads, sep="\n")
 
     # ------------------ END ------------------
     logger.info(f"Execution competed in {(time() - ti):2f}s.")
